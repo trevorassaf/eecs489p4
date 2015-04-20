@@ -197,7 +197,7 @@ init(int sd, struct sockaddr_in *qhost, iqry_t *iqry,
     iov[0].iov_len = sizeof(ihdr_t);
     
     /* for non-gated flow starts */
-    gettimeofday(&start, NULL);
+    // gettimeofday(&start, NULL);
   }
 
   return;
@@ -544,14 +544,28 @@ handleqry()
       string imgname = iqry.iq_name;
       string full_imgname = pathname+IMGDB_DIRSEP+imgname;
 
+      // Check that image was specified 
       if (!iqry.iq_name[0]) {
-        NETIMG_ENAME;
+        imsg_t imsg;
+        imsg.im_vers = NETIMG_VERS;
+        imsg.im_type = NETIMG_ENAME;
+       
+        int bytes = sendto(sd, (char *) &imsg, sizeof(imsg_t), 0, (struct sockaddr *) &qhost, sizeof(struct sockaddr_in)); 
+        net_assert((bytes != sizeof(imsg_t)), "imgdb::handleqry: sendto");
+        return 1;
       }
 
       fifoImg.LoadFromFile(full_imgname);
 
+      // Check if image exists and can be read
       if (!fifoImg.IsLoaded()) {
-        return NETIMG_NFOUND;
+        imsg_t imsg;
+        imsg.im_vers = NETIMG_VERS;
+        imsg.im_type = NETIMG_NFOUND;
+       
+        int bytes = sendto(sd, (char *) &imsg, sizeof(imsg_t), 0, (struct sockaddr *) &qhost, sizeof(struct sockaddr_in)); 
+        net_assert((bytes != sizeof(imsg_t)), "imgdb::handleqry: sendto");
+        return 1;
       }
       
       cerr << "Image: " << endl;
@@ -728,7 +742,7 @@ sendpkt() {
 
   float mult = 1.0 * wfqLinkRate / rsvdrate;
   
-  unsigned int min_finish_time_idx = -1; 
+  int min_finish_time_idx = -1; 
   currFi = -1;
 
   // Find min finish time of WFQ flows 
@@ -878,7 +892,7 @@ sendpkt() {
         secs++;
         usecs -= USECSPERSEC;
       }
-      
+     
       fprintf(
           stderr,
           "FIFO::sendpkt() flow %d done, elapsed time (m:s:ms:us): %d:%d:%d:%d\n",
@@ -892,7 +906,6 @@ sendpkt() {
       // Prepare for the next FIFO flow
       hasFifo = false;
       fifoSendNext = 0;
-      start.tv_usec = 0;
     }
 
   } else { /* send wfq packet */
