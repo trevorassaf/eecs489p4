@@ -1,3 +1,4 @@
 1. Tested on Mac OSX Yosemite and CAEN Linux
-2. Nothing in particular
+2. I derived my code from the lab 8 source. Please use those support files.
+Thanks!
 3. I felt like we could've done more here...
