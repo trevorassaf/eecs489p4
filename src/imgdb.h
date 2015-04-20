@@ -42,6 +42,7 @@
 class Flow {
 
 public:
+
   LTGA curimg;
   long imgsize;
   char *ip;               // pointer to start of image
@@ -85,20 +86,40 @@ public:
 
   Flow flow[IMGDB_MAXFLOW];
 
+  bool fifoLoaded, wfqLoaded;
+  
   float fifoBsize;
   float fifoTrate;
   iqry_t fifoIqry;
+  LTGA fifoImg;
+  imsg_t fifoImsg;
+
+  unsigned int fifoRwnd;
 
   float fifoTokensCreated;
-
-  unsigned int fifoFlowIndex;
   bool hasFifo;
 
-  unsigned int fifoSndNext;
+  unsigned int fifoSegsize;
+  unsigned int fifoSendNext;
   unsigned int fifoDatasize;
   unsigned long int fifoImgsize;
+  unsigned int fifoMss;
 
+  float fifoDelayUsecs;
+  float wfqDelayUsecs;
+  
   unsigned long int totalUsecs;
+
+  struct sockaddr_in fifoClient;
+  struct msghdr fifoMsg;
+  ihdr_t fifoHdr;
+  struct iovec fifoIov[NETIMG_NUMIOV];
+  struct timeval fifoStart;
+
+  float fifoCurrFi;
+
+  unsigned short fifoLinkRate;
+  unsigned short wfqLinkRate;
 
   unsigned short rsvdrate;  // reserved rate, in Kbps
   unsigned short linkrate;  // in Kbps
@@ -125,7 +146,9 @@ public:
   imgdb(int argc, char *argv[]);
 
   int handleqry();
+
   void sendpkt();
+  void sendpkt2();
 };  
 
 #endif /* __IMGDB_H__ */
