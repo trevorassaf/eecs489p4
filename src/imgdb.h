@@ -89,6 +89,7 @@ public:
   bool fifoLoaded, wfqLoaded;
   
   float fifoBsize;
+  float fifoNumTokensInBucket;
   float fifoTrate;
   iqry_t fifoIqry;
   LTGA fifoImg;
@@ -114,7 +115,8 @@ public:
   struct msghdr fifoMsg;
   ihdr_t fifoHdr;
   struct iovec fifoIov[NETIMG_NUMIOV];
-  struct timeval fifoStart;
+  
+  struct timeval start;
 
   float fifoCurrFi;
 

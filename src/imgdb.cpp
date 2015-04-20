@@ -228,8 +228,8 @@ nextFi(float multiplier)
   /* DONE */
   //float segment_delay = (1.0 * segsize) / (multiplier * frate) / 128.0 * 1E6;
   float segment_delay = (1.0 * segsize) / (multiplier * frate);
-   fprintf(stderr, "WFQ computation: segsize: %u, frate: %d, multiplier: %f, curr-fi: %f, segment-delay: %f\n",
-       segsize, frate, multiplier, Fi, segment_delay);
+   // fprintf(stderr, "WFQ computation: segsize: %u, frate: %d, multiplier: %f, curr-fi: %f, segment-delay: %f\n",
+   //     segsize, frate, multiplier, Fi, segment_delay);
   
   return Fi + segment_delay;
 }
@@ -278,7 +278,7 @@ sendpkt(int sd, int fd, float currFi)
   net_assert((bytes < 0), "imgdb_sendimage: sendmsg");
   net_assert((bytes != (int)(segsize+sizeof(ihdr_t))), "Flow::sendpkt: sendmsg bytes");
   
-  fprintf(stderr, "Flow::sendpkt: flow %d: sent offset 0x%x, Fi: %.6f, %d bytes\n",
+  fprintf(stderr, "WFQ::sendpkt() flow %d: sent offset 0x%x, Fi: %.6f, %d bytes\n",
           fd, snd_next, Fi, segsize);
   snd_next += segsize;
   
@@ -502,20 +502,12 @@ handleqry()
       // Initialize FIFO variables
       fifoDatasize = iqry.iq_mss - sizeof(ihdr_t) - NETIMG_UDPIP;
       fifoBsize = (float) fifoDatasize / IMGDB_BPTOK;
-
-      fifoTokensCreated = fifoBsize;
-      
-      fprintf(
-          stderr,
-          "--- fifoBsize: %f, fifoDatasize: %u, iqry.iq_rwnd: %u",
-          fifoBsize,
-          fifoDatasize,
-          iqry.iq_rwnd
-      );
       
       if (iqry.iq_rwnd) {
         fifoBsize *= iqry.iq_rwnd;
       }
+      
+      fifoTokensCreated = fifoBsize;
 
       fifoTrate = 0x80 * fifoLinkRate / IMGDB_BPTOK;
       fifoIqry = iqry;
@@ -713,7 +705,7 @@ sendpkt() {
   for (unsigned int i = 0; i < IMGDB_MAXFLOW; ++i) {
     if (flow[i].in_use) {
       float finish_time = flow[i].nextFi(mult);
-      fprintf(stderr, "- flow[%u] finish time: %f\n", i, finish_time);
+//      fprintf(stderr, "- flow[%u] finish time: %f\n", i, finish_time);
       if (min_finish_time_idx == -1 || finish_time < currFi) {
         min_finish_time_idx = i;
         currFi = finish_time;
@@ -754,6 +746,25 @@ sendpkt() {
       fifoDelayUsecs = fifo_fin_usecs; 
 
       fifoLoaded = true;
+
+      // Check if we need to accumulate tokens
+      float fifo_segment_tokens = (float) fifoSegsize / IMGDB_BPTOK;
+      if (fifoTokensCreated < fifo_segment_tokens) {
+        
+        float fifo_tokens_spawned = (float) random() / INT_MAX * fifoBsize + (fifo_segment_tokens - fifoTokensCreated); 
+        float fifo_token_accum_usecs = fifo_tokens_spawned / fifoTrate * 1E6;
+
+        fprintf(
+            stderr,
+            "FIFO::nextxmission() accumulating tokens for (s:ms:us) %u:%u:%u\n",
+            (unsigned int) fifo_token_accum_usecs / 1000000,
+            ((unsigned int) fifo_token_accum_usecs / 1000) % 1000,
+            (unsigned int) fifo_token_accum_usecs % 1000
+        );
+
+        fifoDelayUsecs += fifo_token_accum_usecs;
+        fifoTokensCreated += fifo_tokens_spawned;
+      }
     }
   }
 
@@ -764,12 +775,12 @@ sendpkt() {
     send_fifo = true;
   } else {
 
-    fprintf(
-        stderr,
-        "COMPARE: fifoDelayUsecs: %f, wfqDelayUsecs: %f\n",
-        fifoDelayUsecs,
-        wfqDelayUsecs
-    );
+    // fprintf(
+    //     stderr,
+    //     "COMPARE: fifoDelayUsecs: %f, wfqDelayUsecs: %f\n",
+    //     fifoDelayUsecs,
+    //     wfqDelayUsecs
+    // );
 
     send_fifo = hasFifo && fifoDelayUsecs <= wfqDelayUsecs; 
   }
@@ -791,12 +802,16 @@ sendpkt() {
     net_assert((fifo_bytes_sent != (int)(fifoSegsize + sizeof(ihdr_t))), "imgdb::sendimg: sendmsg bytes");
 
     // Discard used tokens 
+    assert(fifoTokensCreated >= 0);
     float fifo_segment_tokens = (float) fifoSegsize / IMGDB_BPTOK;
-    fifoTokensCreated -= fifo_segment_tokens;
+    assert(fifo_segment_tokens <= fifoTokensCreated);
+    fifoTokensCreated = (fifo_segment_tokens < fifoTokensCreated)
+        ? fifoTokensCreated - fifo_segment_tokens
+        : 0;
 
     fprintf(
         stderr,
-        "FIFO::sendimg() flow %d sent offset 0x%x, Fi: %.6f, %d bytes\n",
+        "FIFO::sendpkt() flow %d sent offset 0x%x, Fi: %.6f, %d bytes\n",
         -1,
         fifoSendNext,
         0.0,
@@ -826,8 +841,8 @@ sendpkt() {
       struct timeval fifo_end;
       gettimeofday(&fifo_end, NULL);
       
-      usecs = USECSPERSEC - fifoStart.tv_usec + fifo_end.tv_usec;
-      secs = fifo_end.tv_sec - fifoStart.tv_sec - 1;
+      usecs = USECSPERSEC - start.tv_usec + fifo_end.tv_usec;
+      secs = fifo_end.tv_sec - start.tv_sec - 1;
       
       if (usecs > USECSPERSEC) {
         secs++;
@@ -836,19 +851,18 @@ sendpkt() {
       
       fprintf(
           stderr,
-          "FIFO::sendpkt() flow %d done, elapsed time (m:s:ms:us): %d:%d:%d:%d, reserved link rate: %d\n",
+          "FIFO::sendpkt() flow %d done, elapsed time (m:s:ms:us): %d:%d:%d:%d\n",
           -1,
           secs/60,
           secs%60,
           usecs/1000,
-          usecs%1000,
-          fifoLinkRate
+          usecs%1000
       );
 
       // Prepare for the next FIFO flow
       hasFifo = false;
       fifoSendNext = 0;
-      fifoStart.tv_usec = 0;
+      start.tv_usec = 0;
     }
 
   } else { /* send wfq packet */
@@ -869,7 +883,6 @@ sendpkt() {
     wfqDelayUsecs = 0;
     wfqLoaded = false;
 
-    // Cl
     if (done) {
       unsigned short flow_frate = flow[min_finish_time_idx].done();
       
@@ -883,21 +896,20 @@ sendpkt() {
       gettimeofday(&end, NULL);
 
       /* compute elapsed time */
-      usecs = USECSPERSEC-flow[min_finish_time_idx].start.tv_usec+end.tv_usec;
-      secs = end.tv_sec - flow[min_finish_time_idx].start.tv_sec - 1;
+      usecs = USECSPERSEC-start.tv_usec+end.tv_usec;
+      secs = end.tv_sec - start.tv_sec - 1;
       if (usecs > USECSPERSEC) {
         secs++;
         usecs -= USECSPERSEC;
       }
       
       fprintf(stderr,
-          "imgdb::sendpkt: flow %d done, elapsed time (m:s:ms:us): %d:%d:%d:%d, reserved link rate: %d\n",
+          "WFQ::sendpkt() flow %d done, elapsed time (m:s:ms:us): %d:%d:%d:%d\n",
           min_finish_time_idx,
           secs/60,
           secs%60,
           usecs/1000,
-          usecs%1000,
-          rsvdrate
+          usecs%1000
       );
     }
   }
@@ -1119,8 +1131,8 @@ sendpkt2()
       struct timeval fifo_end;
       gettimeofday(&fifo_end, NULL);
       
-      usecs = USECSPERSEC - fifoStart.tv_usec + fifo_end.tv_usec;
-      secs = fifo_end.tv_sec - fifoStart.tv_sec - 1;
+      usecs = USECSPERSEC - start.tv_usec + fifo_end.tv_usec;
+      secs = fifo_end.tv_sec - start.tv_sec - 1;
       
       if (usecs > USECSPERSEC) {
         secs++;
@@ -1141,7 +1153,7 @@ sendpkt2()
       // Prepare for the next FIFO flow
       hasFifo = false;
       fifoSendNext = 0;
-      fifoStart.tv_usec = 0;
+      start.tv_usec = 0;
     }
 
   } else { /* send wfq */
@@ -1301,8 +1313,8 @@ sendpkt2()
       struct timeval fifo_end;
       gettimeofday(&fifo_end, NULL);
       
-      usecs = USECSPERSEC - fifoStart.tv_usec + fifo_end.tv_usec;
-      secs = fifo_end.tv_sec - fifoStart.tv_sec - 1;
+      usecs = USECSPERSEC - start.tv_usec + fifo_end.tv_usec;
+      secs = fifo_end.tv_sec - start.tv_sec - 1;
       
       if (usecs > USECSPERSEC) {
         secs++;
@@ -1317,7 +1329,7 @@ sendpkt2()
 
       hasFifo = false;
       fifoSendNext = 0;
-      fifoStart.tv_usec = 0;
+      start.tv_usec = 0;
 
     }
     
@@ -1418,18 +1430,18 @@ main(int argc, char *argv[])
     imgdb.fifoImgsize = 0;
     imgdb.fifoMss = 0;
     imgdb.totalUsecs = 0;
-    imgdb.fifoStart.tv_usec = 0;
+    imgdb.start.tv_usec = 0;
 
     while (imgdb.handleqry());
 
     imgdb.totalUsecs = 0;
 
-    gettimeofday(&imgdb.fifoStart, NULL);
+    gettimeofday(&imgdb.start, NULL);
     imgdb.fifoDelayUsecs = 0.0;
     imgdb.wfqDelayUsecs = 0.0;
 
     while (imgdb.started) {
-      fprintf(stderr, "\nSend packet iteration!\n");
+      // fprintf(stderr, "\nSend packet iteration!\n");
       imgdb.sendpkt();
     }
   }
